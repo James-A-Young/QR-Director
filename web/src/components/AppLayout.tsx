@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { LayoutDashboard, LogOut, Megaphone, Menu, Palette, QrCode, X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { Suspense, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { api, ApiError } from '../lib/api';
 import { Spinner } from './ui';
@@ -109,7 +109,9 @@ export function AppLayout() {
       )}
       <main className="min-w-0 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
         <div className="mx-auto max-w-7xl">
-          <Outlet />
+          <Suspense fallback={<Spinner />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>
