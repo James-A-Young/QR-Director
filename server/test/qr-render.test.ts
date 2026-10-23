@@ -21,10 +21,10 @@ const logoSvg =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50 5 95 50 50 95 5 50Z" fill="#72b856"/><path d="M50 25 75 50 50 75 25 50Z" fill="#fff"/></svg>';
 const LOGO = { href: `data:image/svg+xml;base64,${Buffer.from(logoSvg).toString('base64')}` };
 
-function roundTrip(style: QrStyleInput, opts: { logo?: boolean; width?: number } = {}): Promise<string | null> {
+async function roundTrip(style: QrStyleInput, opts: { logo?: boolean; width?: number } = {}): Promise<string | null> {
   const parsed = parseStyle(style);
   const { svg } = renderQrSvg({ data: PAYLOAD, style: parsed, logo: opts.logo ? LOGO : null });
-  return decodePng(svgToPng(svg, opts.width ?? 700));
+  return decodePng(await svgToPng(svg, opts.width ?? 700));
 }
 
 describe('qrPayload', () => {
@@ -111,7 +111,7 @@ describe('renderQrSvg scannability', () => {
   it('decodes long, mixed-case payloads in byte mode', async () => {
     const data = 'https://example.com/Path?With=Query&and=Things';
     const { svg } = renderQrSvg({ data, style: parseStyle({ modules: { shape: 'classy' } }) });
-    await expect(decodePng(svgToPng(svg, 800))).resolves.toBe(data);
+    await expect(decodePng(await svgToPng(svg, 800))).resolves.toBe(data);
   });
 });
 
@@ -171,14 +171,14 @@ describe('renderQrSvg output', () => {
 describe('svgToPng', () => {
   it('renders at the requested pixel width', async () => {
     const { svg } = renderQrSvg({ data: PAYLOAD, style: parseStyle({ frame: { style: 'banner-top' } }) });
-    const img = PNG.sync.read(svgToPng(svg, 640));
+    const img = PNG.sync.read(await svgToPng(svg, 640));
     expect(img.width).toBe(640);
     expect(img.height).toBeGreaterThan(640);
   });
 
   it('embeds DPI metadata', async () => {
     const { svg } = renderQrSvg({ data: PAYLOAD, style: parseStyle({}) });
-    const png = svgToPng(svg, 300, 600);
+    const png = await svgToPng(svg, 300, 600);
     const idx = png.indexOf('pHYs');
     expect(idx).toBeGreaterThan(0);
     const ppm = png.readUInt32BE(idx + 4);
@@ -189,7 +189,7 @@ describe('svgToPng', () => {
 
   it('replaces an existing pHYs chunk instead of duplicating it', async () => {
     const { svg } = renderQrSvg({ data: PAYLOAD, style: parseStyle({}) });
-    const png = withDpi(svgToPng(svg, 200, 300), 150);
+    const png = withDpi(await svgToPng(svg, 200, 300), 150);
     expect(png.toString('latin1').split('pHYs').length - 1).toBe(1);
   });
 });

@@ -12,14 +12,18 @@ export class CookieSigner {
     return createHmac('sha256', this.secret).update(body).digest('base64url');
   }
 
-  seal(payload: object, ttlSeconds: number): string {
-    const body = Buffer.from(JSON.stringify({ ...payload, exp: Math.floor(Date.now() / 1000) + ttlSeconds })).toString(
-      'base64url',
-    );
+  /**
+   * `purpose` is signed into the payload so a cookie issued for one use (e.g. login state) can never
+   * be replayed as another (e.g. a session).
+   */
+  seal(payload: object, ttlSeconds: number, purpose: CookiePurpose): string {
+    const body = Buffer.from(
+      JSON.stringify({ ...payload, pur: purpose, exp: Math.floor(Date.now() / 1000) + ttlSeconds }),
+    ).toString('base64url');
     return `${body}.${this.sign(body)}`;
   }
 
-  unseal<T extends object>(value: string | undefined): T | null {
+  unseal<T extends object>(value: string | undefined, purpose: CookiePurpose): T | null {
     if (!value) return null;
     const dot = value.lastIndexOf('.');
     if (dot <= 0) return null;
@@ -28,13 +32,28 @@ export class CookieSigner {
     const expected = Buffer.from(this.sign(body));
     if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) return null;
     try {
-      const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as T & { exp?: number };
+      const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as T & { exp?: number; pur?: string };
+      if (data.pur !== purpose) return null;
       if (typeof data.exp !== 'number' || data.exp < Date.now() / 1000) return null;
       return data;
     } catch {
       return null;
     }
   }
+}
+
+export type CookiePurpose = 'session' | 'login';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Accept only well-formed session payloads. */
+export function asSession(data: Record<string, unknown> | null): SessionData | null {
+  if (!data || typeof data.uid !== 'string' || !UUID.test(data.uid)) return null;
+  return {
+    uid: data.uid,
+    name: typeof data.name === 'string' ? data.name : null,
+    email: typeof data.email === 'string' ? data.email : null,
+  };
 }
 
 export interface SessionData {

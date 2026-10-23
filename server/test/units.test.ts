@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { CookieSigner } from '../src/auth/session.js';
+import { asSession, CookieSigner } from '../src/auth/session.js';
 import { isIdentityAllowed, DevAuthProvider } from '../src/auth/providers.js';
 import { safeReturnTo } from '../src/auth/routes.js';
 import { generateCode, normaliseCode, validateCode, GENERATED_CODE_LENGTH } from '../src/services/codes.js';
@@ -34,6 +34,9 @@ describe('config', () => {
     expect(cfg.QR_UPPERCASE_URLS).toBe(false);
     expect(cfg.secureCookies).toBe(true);
     expect(cfg.PORT).toBe(8080);
+    expect(cfg.GEO_HEADERS).toEqual([]);
+    expect(loadConfig({ ...baseEnv, GEO_HEADERS: 'google-lb, cloudflare' }).GEO_HEADERS).toEqual(['google-lb', 'cloudflare']);
+    expect(() => loadConfig({ ...baseEnv, GEO_HEADERS: 'anything' })).toThrow(/GEO_HEADERS/);
   });
 
   it('requires Entra settings in entra mode', () => {
@@ -57,25 +60,44 @@ describe('CookieSigner', () => {
   const signer = new CookieSigner('s'.repeat(32));
 
   it('round-trips payloads', () => {
-    expect(signer.unseal<{ a: number }>(signer.seal({ a: 1 }, 60))?.a).toBe(1);
+    expect(signer.unseal<{ a: number }>(signer.seal({ a: 1 }, 60, 'session'), 'session')?.a).toBe(1);
   });
 
   it('rejects tampered, foreign and expired cookies', () => {
-    const sealed = signer.seal({ uid: 'u1' }, 60);
+    const sealed = signer.seal({ uid: 'u1' }, 60, 'session');
     const [body, sig] = sealed.split('.');
-    const forged = Buffer.from(JSON.stringify({ uid: 'admin', exp: 9e9 })).toString('base64url');
-    expect(signer.unseal(`${forged}.${sig}`)).toBeNull();
-    expect(signer.unseal(`${body}.x${sig}`)).toBeNull();
-    expect(new CookieSigner('t'.repeat(32)).unseal(sealed)).toBeNull();
-    expect(signer.unseal(signer.seal({ uid: 'u1' }, -1))).toBeNull();
-    expect(signer.unseal('garbage')).toBeNull();
-    expect(signer.unseal(undefined)).toBeNull();
+    const forged = Buffer.from(JSON.stringify({ uid: 'admin', pur: 'session', exp: 9e9 })).toString('base64url');
+    expect(signer.unseal(`${forged}.${sig}`, 'session')).toBeNull();
+    expect(signer.unseal(`${body}.x${sig}`, 'session')).toBeNull();
+    expect(new CookieSigner('t'.repeat(32)).unseal(sealed, 'session')).toBeNull();
+    expect(signer.unseal(signer.seal({ uid: 'u1' }, -1, 'session'), 'session')).toBeNull();
+    expect(signer.unseal('garbage', 'session')).toBeNull();
+    expect(signer.unseal(undefined, 'session')).toBeNull();
+  });
+
+  it('binds cookies to their purpose', () => {
+    expect(signer.unseal(signer.seal({ uid: 'u1' }, 60, 'login'), 'session')).toBeNull();
+    expect(signer.unseal(signer.seal({ uid: 'u1' }, 60, 'session'), 'login')).toBeNull();
+  });
+
+  it('validates session shape', () => {
+    expect(asSession({ uid: '6f1c2a4e-1b2c-4d3e-8f90-123456789abc', name: 'A', email: 7 })).toEqual({
+      uid: '6f1c2a4e-1b2c-4d3e-8f90-123456789abc',
+      name: 'A',
+      email: null,
+    });
+    expect(asSession({ uid: 'admin' })).toBeNull();
+    expect(asSession({ state: 'x' })).toBeNull();
+    expect(asSession(null)).toBeNull();
   });
 });
 
 describe('auth helpers', () => {
   it('only allows same-origin return paths', () => {
-    expect(safeReturnTo('/app/campaigns/1')).toBe('/app/campaigns/1');
+    expect(safeReturnTo('/app/campaigns/1?tab=analytics')).toBe('/app/campaigns/1?tab=analytics');
+    expect(safeReturnTo('/\t/evil.com')).toBe('/app');
+    expect(safeReturnTo('/app/../evil')).toBe('/app');
+    expect(safeReturnTo('/api/campaigns')).toBe('/app');
     expect(safeReturnTo('//evil.com')).toBe('/app');
     expect(safeReturnTo('/\\evil.com')).toBe('/app');
     expect(safeReturnTo('https://evil.com')).toBe('/app');
@@ -140,7 +162,7 @@ describe('tracking', () => {
   });
 
   it('builds a hit record from the request', () => {
-    const geo = createGeoLookup(null);
+    const geo = createGeoLookup(null, ['google-lb']);
     const hit = buildHit(
       {
         ip: '203.0.113.9',
@@ -165,6 +187,13 @@ describe('tracking', () => {
       is_bot: false,
     });
     expect(JSON.parse(hit.query as string)).toEqual({ utm_source: 'flyer', list: 'x' });
+  });
+
+  it('only trusts geo headers from configured proxies', () => {
+    const headers = { 'cf-ipcountry': 'KP', 'x-client-region': 'GB' };
+    expect(createGeoLookup(null).lookup('1.2.3.4', headers).country).toBeNull();
+    expect(createGeoLookup(null, ['google-lb']).lookup('1.2.3.4', headers).country).toBe('GB');
+    expect(createGeoLookup(null, ['cloudflare']).lookup('1.2.3.4', headers).country).toBe('KP');
   });
 
   it('appends UTM tags without clobbering existing ones', () => {
@@ -284,5 +313,16 @@ describe('buildApp', () => {
     expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
     await app.close();
     await db.destroy();
+  });
+});
+
+describe('bucketKeys performance', () => {
+  it('builds ten years of daily buckets quickly', () => {
+    const to = new Date('2026-10-23T12:00:00Z');
+    const start = performance.now();
+    const keys = bucketKeys(new Date(to.getTime() - 3660 * 86_400_000), to, 'Europe/London', 'day');
+    expect(performance.now() - start).toBeLessThan(200);
+    expect(keys).toHaveLength(3661);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

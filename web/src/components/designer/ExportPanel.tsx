@@ -19,7 +19,9 @@ export function ExportPanel({ linkId, disabled, aspect }: { linkId: string; disa
   const [dpi, setDpi] = useState(300);
 
   const pxWidth = unit === 'px' ? width : Math.round((unit === 'mm' ? width / 25.4 : width) * dpi);
-  const tooBig = format === 'png' && pxWidth > 8000;
+  // Mirrors the server limits: 8000 px wide and 36 megapixels in total (frames add height).
+  const megapixels = (pxWidth * pxWidth * (aspect ?? 1)) / 1e6;
+  const tooBig = format === 'png' && (pxWidth > 8000 || megapixels > 36);
   const valid = width > 0 && !tooBig;
   const height = aspect ? width * aspect : width;
   const href = api.qrUrl(linkId, { format, width, unit, dpi, download: true });
@@ -73,7 +75,7 @@ export function ExportPanel({ linkId, disabled, aspect }: { linkId: string; disa
       </div>
       <p className="text-xs text-muted">
         {tooBig
-          ? 'PNG exports are limited to 8000 px wide. Use SVG for very large prints.'
+          ? 'PNG exports are limited to 8000 px wide and 36 megapixels. Use SVG for very large prints.'
           : `Output ${format === 'png' ? `${pxWidth} px` : `${width} ${unit}`} wide${aspect && aspect !== 1 ? `, ${Math.round(height * 10) / 10} ${unit === 'px' && format === 'png' ? 'px' : unit} tall` : ''}.${format === 'svg' ? ' Vector files scale to any size without losing quality.' : ''}`}
       </p>
       <a

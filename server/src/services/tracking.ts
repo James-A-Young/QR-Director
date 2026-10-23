@@ -95,11 +95,12 @@ export function buildHit(
     region: geo.region,
     city: geo.city,
     query: JSON.stringify(sanitiseQuery(req.query)),
-    destination_url: ctx.destinationUrl,
+    destination_url: ctx.destinationUrl.slice(0, 4096),
   };
 }
 
 const UTM_KEYS = ['source', 'medium', 'campaign', 'term', 'content'] as const;
+const MAX_UTM_LENGTH = 200;
 
 /**
  * Final URL a visitor is sent to: the destination plus the link's UTM tags. Tags already present on
@@ -115,7 +116,8 @@ export function resolveDestination(destination: string, utm: UtmParams, incoming
   for (const key of UTM_KEYS) {
     const name = `utm_${key}`;
     const passthrough = incoming[name];
-    const value = typeof passthrough === 'string' && passthrough ? passthrough : utm[key];
+    // Visitors control incoming tags, so cap them; oversized values fall back to the link's own tag.
+    const value = typeof passthrough === 'string' && passthrough && passthrough.length <= MAX_UTM_LENGTH ? passthrough : utm[key];
     if (value && !url.searchParams.has(name)) url.searchParams.set(name, value);
   }
   return url.toString();

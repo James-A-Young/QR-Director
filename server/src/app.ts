@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static';
 import { ZodError } from 'zod';
 import type { Config } from './config.js';
 import type { DB } from './db/database.js';
-import { CookieSigner, SESSION_COOKIE, type SessionData } from './auth/session.js';
+import { asSession, CookieSigner, SESSION_COOKIE } from './auth/session.js';
 import { DevAuthProvider, EntraAuthProvider, type AuthProvider } from './auth/providers.js';
 import { authRoutes } from './auth/routes.js';
 import { HttpError } from './http.js';
@@ -56,13 +56,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     config,
     db,
     signer: new CookieSigner(config.SESSION_SECRET),
-    geo: opts.geo ?? createGeoLookup(null),
+    geo: opts.geo ?? createGeoLookup(null, config.GEO_HEADERS),
   });
 
   await app.register(cookie);
   app.decorateRequest('user', null);
   app.addHook('onRequest', async (req) => {
-    req.user = app.ctx.signer.unseal<SessionData>(req.cookies[SESSION_COOKIE]);
+    req.user = asSession(app.ctx.signer.unseal<Record<string, unknown>>(req.cookies[SESSION_COOKIE], 'session'));
   });
   await app.register(helmet, {
     contentSecurityPolicy: {
@@ -112,11 +112,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     }
   });
 
-  // Everything under /api requires a session; mutations also need a custom header, which cross-site
-  // forms cannot send, as a CSRF guard on top of SameSite=Lax cookies.
+  // Everything in this encapsulated context requires a session; mutations also need a custom header,
+  // which cross-site forms cannot send, as a CSRF guard on top of SameSite=Lax cookies. The hook
+  // runs for every route registered here regardless of how the URL was spelled (e.g. /%61pi/...).
   await app.register(async (api) => {
     api.addHook('onRequest', async (req, reply) => {
-      if (!req.url.startsWith('/api/')) return;
       if (!req.user) return reply.code(401).send({ error: 'unauthenticated', message: 'Sign in required' });
       if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers['x-qrd-request'] !== '1') {
         return reply.code(403).send({ error: 'csrf', message: 'Missing X-QRD-Request header' });

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { HttpError, notFound, parse, uuidParam } from '../http.js';
 import { qrPayload } from '../qr/matrix.js';
-import { MAX_PNG_DIMENSION, svgToPng } from '../qr/png.js';
+import { MAX_PNG_DIMENSION, MAX_PNG_PIXELS, svgToPng } from '../qr/png.js';
 import { renderQrSvg } from '../qr/render.js';
 import { parseStyle, qrStyleSchema, styleWarnings, type QrStyle } from '../qr/style.js';
 import { loadLogoHref, shortUrl } from '../services/repo.js';
@@ -78,7 +78,11 @@ export async function qrRoutes(app: FastifyInstance) {
     const px = widthInPixels(q.width, q.unit, q.dpi);
     if (px > MAX_PNG_DIMENSION) throw new HttpError(400, 'too_large', `PNG output is limited to ${MAX_PNG_DIMENSION}px wide`);
     const result = await render(url, style, { width: px, unit: 'px', title: url });
-    const png = svgToPng(result.svg, px, q.dpi);
+    const pixels = px * ((px * result.viewBox.height) / result.viewBox.width);
+    if (pixels > MAX_PNG_PIXELS) {
+      throw new HttpError(400, 'too_large', `PNG output is limited to ${MAX_PNG_PIXELS / 1e6} megapixels; use SVG for larger prints`);
+    }
+    const png = await svgToPng(result.svg, px, q.dpi);
     return reply.type('image/png').header('content-disposition', disposition('png')).header('cache-control', 'no-store').send(png);
   });
 }

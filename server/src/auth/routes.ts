@@ -9,12 +9,22 @@ declare module 'fastify' {
   }
 }
 
-/** Only allow returning to same-origin paths, never `//host` or `/\host`, to avoid open redirects. */
+/** Validate a post-login return path so sign-in can never redirect off-site. */
 export function safeReturnTo(value: unknown): string {
-  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
+  // Reject control characters and whitespace outright: browsers strip tabs/newlines from URLs, which
+  // turns `/\t/evil.com` into `//evil.com`. Then require a same-origin path under /app.
+  // eslint-disable-next-line no-control-regex
+  if (typeof value !== 'string' || value.length > 512 || !value.startsWith('/') || /[\x00-\x20\x7f\\]/.test(value)) {
     return '/app';
   }
-  return value.slice(0, 512);
+  try {
+    const base = 'https://qrd.invalid';
+    const url = new URL(value, base);
+    if (url.origin !== base || !(url.pathname === '/app' || url.pathname.startsWith('/app/'))) return '/app';
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return '/app';
+  }
 }
 
 export async function authRoutes(app: FastifyInstance, opts: { provider: AuthProvider }) {
@@ -28,7 +38,7 @@ export async function authRoutes(app: FastifyInstance, opts: { provider: AuthPro
 
   app.get('/auth/login', async (req: FastifyRequest<{ Querystring: { returnTo?: string } }>, reply) => {
     const { url, state } = await opts.provider.beginLogin(safeReturnTo(req.query.returnTo));
-    reply.setCookie(LOGIN_COOKIE, signer.seal(state, 600), { ...cookieOpts, maxAge: 600 });
+    reply.setCookie(LOGIN_COOKIE, signer.seal(state, 600, 'login'), { ...cookieOpts, maxAge: 600 });
     return reply.redirect(url);
   });
 
@@ -36,12 +46,14 @@ export async function authRoutes(app: FastifyInstance, opts: { provider: AuthPro
     reply.code(status).type('text/html').send(errorPage('Sign-in failed', message, '/auth/login', 'Try again'));
 
   app.get('/auth/callback', async (req, reply) => {
-    const state = signer.unseal<LoginState>(req.cookies[LOGIN_COOKIE]);
+    const state = signer.unseal<LoginState>(req.cookies[LOGIN_COOKIE], 'login');
     reply.clearCookie(LOGIN_COOKIE, { path: '/' });
     const query = req.query as Record<string, string | undefined>;
     if (query.error) {
       req.log.warn({ error: query.error, description: query.error_description }, 'IdP returned an error');
-      return fail(reply, 400, query.error_description ?? query.error);
+      // Never echo IdP-provided text: anyone can craft this URL, so it would let them put words on our page.
+      const message = query.error === 'access_denied' ? 'Sign-in was cancelled or access was denied.' : 'Microsoft sign-in did not complete.';
+      return fail(reply, 400, message);
     }
     if (!state) return fail(reply, 400, 'Your sign-in session expired. Please try again.');
 
@@ -68,16 +80,16 @@ export async function authRoutes(app: FastifyInstance, opts: { provider: AuthPro
 
     const ttl = Math.round(config.SESSION_TTL_HOURS * 3600);
     const session: SessionData = { uid: user.id, name: user.name, email: user.email };
-    reply.setCookie(SESSION_COOKIE, signer.seal(session, ttl), { ...cookieOpts, maxAge: ttl });
+    reply.setCookie(SESSION_COOKIE, signer.seal(session, ttl, 'session'), { ...cookieOpts, maxAge: ttl });
     return reply.redirect(safeReturnTo(state.returnTo));
   });
 
-  const logout = async (_req: FastifyRequest, reply: FastifyReply) => {
+  // POST with the CSRF header only, so other sites cannot sign users out.
+  app.post('/auth/logout', async (req, reply) => {
+    if (req.headers['x-qrd-request'] !== '1') return reply.code(403).send({ error: 'csrf', message: 'Missing X-QRD-Request header' });
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
-    return reply.redirect('/app/login');
-  };
-  app.get('/auth/logout', logout);
-  app.post('/auth/logout', logout);
+    return reply.code(204).send();
+  });
 
   if (opts.provider.kind === 'dev') {
     app.get('/auth/dev-login', async (req: FastifyRequest<{ Querystring: { state?: string } }>, reply) => {

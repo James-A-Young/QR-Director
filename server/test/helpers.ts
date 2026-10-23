@@ -18,6 +18,7 @@ export function testConfig(overrides: Record<string, string> = {}): Config {
     SESSION_SECRET: 'test-secret-test-secret-test-secret!',
     AUTH_MODE: 'dev',
     TRUST_PROXY_HOPS: '1',
+    GEO_HEADERS: 'google-lb',
     ...overrides,
   });
 }

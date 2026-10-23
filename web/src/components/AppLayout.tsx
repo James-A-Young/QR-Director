@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { LayoutDashboard, LogOut, Megaphone, Menu, Palette, QrCode, X } from 'lucide-react';
 import { Suspense, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, request } from '../lib/api';
 import { Spinner } from './ui';
 
 export function useMe() {
@@ -79,9 +79,18 @@ export function AppLayout() {
             <div className="truncate text-sm font-medium text-fg">{me.data?.name ?? 'Signed in'}</div>
             <div className="truncate text-xs text-muted">{me.data?.email}</div>
           </div>
-          <a href="/auth/logout" className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-fg" aria-label="Sign out" title="Sign out">
+          <button
+            type="button"
+            onClick={async () => {
+              await request('POST', '/auth/logout').catch(() => undefined);
+              window.location.assign('/app/login');
+            }}
+            className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-fg"
+            aria-label="Sign out"
+            title="Sign out"
+          >
             <LogOut className="size-4" />
-          </a>
+          </button>
         </div>
       </div>
     </nav>

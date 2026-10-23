@@ -18,7 +18,8 @@ where each code was placed.
   plate and border, and call-to-action frames with your own text. A live preview flags scannability
   risks. Designs can be saved as templates and applied to a whole campaign.
 - **Print-ready downloads.** SVG (vector, text converted to outlines) or PNG at an exact pixel size,
-  or a physical size in mm or inches at 150–1200 dpi, with DPI metadata embedded.
+  or a physical size in mm or inches at 150–1200 dpi, with DPI metadata embedded. PNGs are limited to
+  8000 px wide and 36 megapixels; use SVG for anything larger.
 - **Microsoft sign-in** via Entra ID, configured with environment variables.
 - **One container.** API, redirector and UI are served by a single Node process, ready for Cloud Run.
 
@@ -145,9 +146,12 @@ Notes:
 
 Country, region and city come from, in order of preference:
 
-1. Edge headers. On a Google Cloud external load balancer, add custom request headers
-   `X-Client-Region: {client_region}`, `X-Client-Region-Subdivision: {client_region_subdivision}`
-   and `X-Client-City: {client_city}`. Cloudflare's `CF-IPCountry` is also read.
+1. Edge headers from a proxy you trust, enabled with `GEO_HEADERS`. On a Google Cloud external load
+   balancer, add custom request headers `X-Client-Region: {client_region}`,
+   `X-Client-Region-Subdivision: {client_region_subdivision}` and `X-Client-City: {client_city}`,
+   then set `GEO_HEADERS=google-lb`. `cloudflare`, `appengine` and `vercel` are also supported.
+   These headers are ignored unless configured, because on plain Cloud Run visitors could send them
+   themselves.
 2. A MaxMind GeoLite2/GeoIP2 City database. Set `GEOIP_DB_PATH` to the `.mmdb` file, e.g. baked into
    a derived image or mounted from a volume. GeoLite2 needs a free MaxMind licence.
 
@@ -167,6 +171,7 @@ Without either, location columns stay empty and everything else still works.
 | `SESSION_TTL_HOURS` | `12` | Session lifetime |
 | `PORT` | `8080` | Listen port (Cloud Run sets this) |
 | `TRUST_PROXY_HOPS` | `1` | Reverse proxies in front of the app |
+| `GEO_HEADERS` | | Trusted geo header sources: `google-lb`, `cloudflare`, `appengine`, `vercel` |
 | `GEOIP_DB_PATH` | | MaxMind City database path |
 | `RAW_IP_RETENTION_DAYS` | `90` | Blank stored IP addresses after N days (`0` keeps them) |
 | `HIT_RETENTION_DAYS` | `0` | Delete visit records after N days (`0` keeps them) |
@@ -197,6 +202,8 @@ Before going live:
   throttles CPU after a response, but capped at 1.5 s, and failures are logged rather than shown to
   the visitor.
 - `HEAD` requests (link previews, uptime checks) are not counted.
+- PNG rasterising runs in a two-worker thread pool, so large exports never stall redirects. CSV
+  exports stream in pages, so memory stays flat.
 - A logo forces error-correction level H, and modules behind it are cleared according to the plate
   shape. The logo size slider is capped at 30 % of the code width, the largest size the decode
   tests confirm works across all shapes.

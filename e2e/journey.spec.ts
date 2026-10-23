@@ -93,6 +93,12 @@ test('save and reuse a template', async ({ page }) => {
   await expect(page.getByText('Template saved')).toBeVisible();
   await page.getByRole('link', { name: 'Templates' }).first().click();
   await expect(page.getByRole('link', { name: `Brand ${id}` })).toBeVisible();
+
+  // Sign out ends the session.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/app\/login/);
+  await page.goto('/app/templates');
+  await expect(page).toHaveURL(/\/app\/login/);
 });
 
 test('unknown short links show a friendly page', async ({ page }) => {

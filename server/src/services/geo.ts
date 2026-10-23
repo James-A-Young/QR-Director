@@ -7,6 +7,15 @@ export interface GeoResult {
   city: string | null;
 }
 
+/** Edge proxies whose geo headers can be trusted. Headers are only honoured when the proxy adds them. */
+export const GEO_HEADER_PROVIDERS = {
+  'google-lb': { country: 'x-client-region', region: 'x-client-region-subdivision', city: 'x-client-city' },
+  appengine: { country: 'x-appengine-country', region: 'x-appengine-region', city: 'x-appengine-city' },
+  cloudflare: { country: 'cf-ipcountry', region: 'cf-region', city: 'cf-ipcity' },
+  vercel: { country: 'x-vercel-ip-country', region: 'x-vercel-ip-country-region', city: 'x-vercel-ip-city' },
+} as const;
+export type GeoHeaderProvider = keyof typeof GEO_HEADER_PROVIDERS;
+
 export interface GeoLookup {
   lookup(ip: string | null, headers: Record<string, string | string[] | undefined>): GeoResult;
 }
@@ -27,16 +36,17 @@ const header = (headers: Record<string, string | string[] | undefined>, ...names
 };
 
 /**
- * Resolves visitor location. Prefers headers injected by an edge proxy (Google Cloud load balancer
- * custom headers, App Engine, Cloudflare) and falls back to a MaxMind database if one is configured.
+ * Resolves visitor location. Uses headers injected by trusted edge proxies (configured explicitly,
+ * because on a bare deployment a client could send them itself), then a MaxMind database if any.
  */
-export function createGeoLookup(reader: Reader<CityResponse> | null): GeoLookup {
+export function createGeoLookup(reader: Reader<CityResponse> | null, providers: GeoHeaderProvider[] = []): GeoLookup {
+  const names = providers.map((p) => GEO_HEADER_PROVIDERS[p]);
   return {
     lookup(ip, headers) {
       const fromHeaders: GeoResult = {
-        country: header(headers, 'x-client-region', 'x-appengine-country', 'cf-ipcountry', 'x-vercel-ip-country')?.toUpperCase() ?? null,
-        region: header(headers, 'x-client-region-subdivision', 'x-appengine-region', 'x-vercel-ip-country-region'),
-        city: header(headers, 'x-client-city', 'x-appengine-city', 'x-vercel-ip-city'),
+        country: header(headers, ...names.map((n) => n.country))?.toUpperCase() ?? null,
+        region: header(headers, ...names.map((n) => n.region)),
+        city: header(headers, ...names.map((n) => n.city)),
       };
       if (fromHeaders.country || !reader || !ip) return fromHeaders;
       try {
@@ -53,14 +63,18 @@ export function createGeoLookup(reader: Reader<CityResponse> | null): GeoLookup 
   };
 }
 
-export async function loadGeoLookup(path: string | undefined, log: FastifyBaseLogger): Promise<GeoLookup> {
-  if (!path) return createGeoLookup(null);
+export async function loadGeoLookup(
+  path: string | undefined,
+  providers: GeoHeaderProvider[],
+  log: FastifyBaseLogger,
+): Promise<GeoLookup> {
+  if (!path) return createGeoLookup(null, providers);
   try {
     const reader = await maxmind.open<CityResponse>(path);
     log.info({ path }, 'Loaded GeoIP database');
-    return createGeoLookup(reader);
+    return createGeoLookup(reader, providers);
   } catch (err) {
     log.warn({ err, path }, 'Could not load GeoIP database; continuing without IP geolocation');
-    return createGeoLookup(null);
+    return createGeoLookup(null, providers);
   }
 }

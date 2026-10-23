@@ -216,6 +216,24 @@ describe('QR designer page', () => {
     const width = screen.getByLabelText('Width (mm)');
     await userEvent.clear(width);
     await userEvent.type(width, '2000');
-    expect(screen.getByText(/limited to 8000 px/)).toBeInTheDocument();
+    expect(screen.getByText(/limited to 8000 px wide and 36 megapixels/)).toBeInTheDocument();
+  });
+});
+
+describe('sign out', () => {
+  it('posts to /auth/logout with the CSRF header', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    const { calls } = mockApi({
+      'GET /api/me': ME,
+      'GET /api/campaigns': [],
+      'POST /auth/logout': () => new Response(null, { status: 204 }),
+    });
+    renderRoutes(routes, '/campaigns');
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Sign out' }))[0]!);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('/app/login'));
+    const call = calls.find((c) => c.path === '/auth/logout')!;
+    expect(call.method).toBe('POST');
+    expect(call.headers['x-qrd-request']).toBe('1');
   });
 });

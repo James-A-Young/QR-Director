@@ -41,6 +41,15 @@ const envSchema = z.object({
   /** Number of reverse proxies in front of the app (Cloud Run = 1, Cloud Run behind a load balancer = 2). */
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(1),
 
+  /**
+   * Comma separated edge proxies whose geo headers to trust: google-lb, appengine, cloudflare, vercel.
+   * Leave empty on plain Cloud Run, where visitors could forge them.
+   */
+  GEO_HEADERS: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean))
+    .pipe(z.array(z.enum(['google-lb', 'appengine', 'cloudflare', 'vercel']))),
   /** Optional path to a MaxMind GeoLite2/GeoIP2 City .mmdb file for IP geolocation. */
   GEOIP_DB_PATH: optionalString,
 

@@ -94,9 +94,11 @@ describe('authentication', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('logs out', async () => {
-    const res = await t.app.inject({ method: 'POST', url: '/auth/logout' });
-    expect(res.statusCode).toBe(302);
+  it('logs out only via POST with the CSRF header', async () => {
+    expect((await t.app.inject({ method: 'GET', url: '/auth/logout' })).statusCode).toBe(404);
+    expect((await t.app.inject({ method: 'POST', url: '/auth/logout' })).statusCode).toBe(403);
+    const res = await t.app.inject({ method: 'POST', url: '/auth/logout', headers: { 'x-qrd-request': '1' } });
+    expect(res.statusCode).toBe(204);
     expect(res.cookies.find((c) => c.name === 'qrd_session')?.value).toBe('');
   });
 });
@@ -476,6 +478,10 @@ describe('QR codes, templates and assets', () => {
 
     const tooBig = await t.api('GET', `/api/links/${id}/qr?format=png&width=100&unit=in&dpi=1200`);
     expect(tooBig.status).toBe(400);
+    // Within the width cap, but the card frame makes it taller than wide: over the pixel budget.
+    const tooManyPixels = await t.api<{ message: string }>('GET', `/api/links/${id}/qr?format=png&width=7000`);
+    expect(tooManyPixels.status).toBe(400);
+    expect(tooManyPixels.body.message).toMatch(/megapixels/);
   });
 
   it('manages templates', async () => {

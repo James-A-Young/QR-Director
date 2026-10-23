@@ -47,7 +47,9 @@ describe('sign-in policy', () => {
   });
 
   it('handles IdP errors and failed code exchange', async () => {
-    expect((await callback('error=access_denied&error_description=User+cancelled')).body).toContain('User cancelled');
+    const denied = await callback('error=access_denied&error_description=Call+0800+to+unlock');
+    expect(denied.body).toContain('Sign-in was cancelled');
+    expect(denied.body).not.toContain('0800');
     expect((await callback('code=bad&who=member@example.com')).statusCode).toBe(400);
   });
 

@@ -31,7 +31,7 @@ async function main() {
   }
   if (config.AUTH_MODE === 'dev') logger.warn('AUTH_MODE=dev: anyone can sign in with any e-mail. Never use this in production.');
 
-  const geo = await loadGeoLookup(config.GEOIP_DB_PATH, logger);
+  const geo = await loadGeoLookup(config.GEOIP_DB_PATH, config.GEO_HEADERS, logger);
   const app = await buildApp({ config, db, geo, logger });
 
   const runRetention = async () => {

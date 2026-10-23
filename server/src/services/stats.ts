@@ -28,27 +28,47 @@ export function chooseBucket(from: Date, to: Date): Bucket {
   return to.getTime() - from.getTime() <= 3 * 86_400_000 ? 'hour' : 'day';
 }
 
-/** Format a local wall-clock bucket the same way Postgres does (YYYY-MM-DDTHH:00). */
-function bucketKey(date: Date, tz: string, bucket: Bucket): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Local wall-clock parts of an instant in a time zone (formatters are cached: they are costly). */
+function localParts(date: Date, tz: string) {
+  let fmt = formatters.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23',
+    });
+    formatters.set(tz, fmt);
+  }
+  const parts = fmt.formatToParts(date);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
-  return `${get('year')}-${get('month')}-${get('day')}T${bucket === 'hour' ? get('hour') : '00'}:00`;
+  return { y: get('year'), m: get('month'), d: get('day'), h: get('hour') };
 }
 
-/** Every bucket key in the range, so charts show zero-filled gaps. */
+/** Every bucket key in the range (formatted like Postgres: YYYY-MM-DDTHH:00), so charts show gaps as zeros. */
 export function bucketKeys(from: Date, to: Date, tz: string, bucket: Bucket): string[] {
   const keys: string[] = [];
-  const step = 3_600_000; // walk hourly; DST-safe because keys are derived from local wall time
-  for (let t = from.getTime(); t < to.getTime(); t += step) {
-    const key = bucketKey(new Date(t), tz, bucket);
-    if (keys[keys.length - 1] !== key) keys.push(key);
+  if (to <= from) return keys;
+  if (bucket === 'hour') {
+    // Walk real hours; keys come from local wall time so DST shifts are handled.
+    for (let t = from.getTime(); t < to.getTime(); t += 3_600_000) {
+      const p = localParts(new Date(t), tz);
+      const key = `${p.y}-${p.m}-${p.d}T${p.h}:00`;
+      if (keys[keys.length - 1] !== key) keys.push(key);
+    }
+    return keys;
+  }
+  // Daily: enumerate calendar dates between the local first and last day (one step per day).
+  const a = localParts(from, tz);
+  const b = localParts(new Date(to.getTime() - 1), tz);
+  const day = new Date(Date.UTC(Number(a.y), Number(a.m) - 1, Number(a.d)));
+  const last = Date.UTC(Number(b.y), Number(b.m) - 1, Number(b.d));
+  for (; day.getTime() <= last; day.setUTCDate(day.getUTCDate() + 1)) {
+    keys.push(`${day.toISOString().slice(0, 10)}T00:00`);
   }
   return keys;
 }

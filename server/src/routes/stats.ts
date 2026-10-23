@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { HttpError, notFound, parse, uuidParam } from '../http.js';
@@ -29,6 +30,9 @@ export function buildFilter(raw: unknown, campaignId?: string): StatsFilter {
   }
   return { campaignId, linkIds, from, to, tz: q.tz, includeBots: q.includeBots };
 }
+
+const CSV_PAGE_SIZE = 2000;
+const CSV_MAX_ROWS = 1_000_000;
 
 const CSV_COLUMNS = [
   'occurred_at', 'code', 'source', 'ip', 'country', 'region', 'city', 'device_type', 'device_vendor', 'device_model',
@@ -103,23 +107,39 @@ export async function statsRoutes(app: FastifyInstance) {
     const { id } = parse(uuidParam, req.params);
     const campaign = await db.selectFrom('campaigns').select('name').where('id', '=', id).executeTakeFirst();
     if (!campaign) throw notFound('Campaign');
-    const rows = await recentHitsQuery(db, buildFilter(req.query, id)).limit(100_000).execute();
-    const lines = [CSV_COLUMNS.join(',')];
-    for (const r of rows) {
-      lines.push(
-        [
-          r.occurred_at, r.code, r.source_label, r.ip, r.country, r.region, r.city, r.device_type, r.device_vendor,
-          r.device_model, r.os, r.os_version, r.browser, r.browser_version, r.language, r.referrer, r.is_bot,
-          r.visitor_hash, r.query, r.destination_url, r.user_agent,
-        ]
-          .map(csvCell)
-          .join(','),
-      );
+    const filter = buildFilter(req.query, id);
+
+    // Stream in keyset pages so memory stays flat however many rows are exported.
+    async function* rows() {
+      yield `\uFEFF${CSV_COLUMNS.join(',')}\r\n`;
+      let before: number | undefined;
+      for (let exported = 0; exported < CSV_MAX_ROWS; ) {
+        let q = recentHitsQuery(db, filter).limit(CSV_PAGE_SIZE);
+        if (before !== undefined) q = q.where('hits.id', '<', before);
+        const page = await q.execute();
+        if (page.length === 0) return;
+        let chunk = '';
+        for (const r of page) {
+          chunk +=
+            [
+              r.occurred_at, r.code, r.source_label, r.ip, r.country, r.region, r.city, r.device_type, r.device_vendor,
+              r.device_model, r.os, r.os_version, r.browser, r.browser_version, r.language, r.referrer, r.is_bot,
+              r.visitor_hash, r.query, r.destination_url, r.user_agent,
+            ]
+              .map(csvCell)
+              .join(',') + '\r\n';
+        }
+        yield chunk;
+        exported += page.length;
+        before = page[page.length - 1]!.id;
+        if (page.length < CSV_PAGE_SIZE) return;
+      }
     }
+
     const slug = campaign.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'campaign';
     return reply
       .type('text/csv; charset=utf-8')
       .header('content-disposition', `attachment; filename="${slug}-hits.csv"`)
-      .send(`\uFEFF${lines.join('\r\n')}\r\n`);
+      .send(Readable.from(rows()));
   });
 }
