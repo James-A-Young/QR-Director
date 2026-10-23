@@ -1,0 +1,24 @@
+{
+  "name": "qr-director",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Short links, campaign tracking and highly customisable QR codes.",
+  "license": "GPL-2.0-only",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace server & npm run dev --workspace web",
+    "build": "npm run build --workspace web && npm run build --workspace server",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces",
+    "test:e2e": "playwright test",
+    "start": "npm run start --workspace server"
+  }
+}
