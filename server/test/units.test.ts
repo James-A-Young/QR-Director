@@ -206,6 +206,10 @@ describe('style', () => {
     expect(codes({ foreground: { type: 'solid', color: '#dddddd' } })).toContain('low-contrast');
     expect(codes({ foreground: { type: 'solid', color: '#ffffff' }, background: { color: '#000000' } })).toContain('inverted');
     expect(codes({ margin: 1 })).toContain('small-margin');
+    // A brand green pupil (2.4:1) is fine; the same colour for data modules is not.
+    expect(codes({ eyes: { innerColor: '#72b856' } })).toEqual([]);
+    expect(codes({ foreground: { type: 'solid', color: '#72b856' } })).toContain('low-contrast');
+    expect(codes({ eyes: { innerColor: '#e5e7eb' } })).toContain('low-contrast');
     expect(codes({ background: { transparent: true } })).toContain('transparent');
     expect(codes({ logo: { assetId: '00000000-0000-4000-8000-000000000001', size: 0.3 } })).toContain('large-logo');
   });
@@ -266,5 +270,19 @@ describe('time buckets', () => {
     expect(keys).toEqual(['2026-10-24T00:00', '2026-10-25T00:00', '2026-10-26T00:00']);
     const hours = bucketKeys(new Date('2026-06-01T00:00:00Z'), new Date('2026-06-01T03:00:00Z'), 'UTC', 'hour');
     expect(hours).toEqual(['2026-06-01T00:00', '2026-06-01T01:00', '2026-06-01T02:00']);
+  });
+});
+
+describe('buildApp', () => {
+  it('accepts a pino logger instance (as used in production)', async () => {
+    const { pino } = await import('pino');
+    const { buildApp } = await import('../src/app.js');
+    const { createDatabase } = await import('../src/db/database.js');
+    const db = createDatabase({ connectionString: 'postgres://localhost:1/none' });
+    const app = await buildApp({ config: loadConfig(baseEnv), db, logger: pino({ level: 'silent' }) });
+    await app.ready();
+    expect((await app.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
+    await app.close();
+    await db.destroy();
   });
 });

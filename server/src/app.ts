@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
@@ -37,17 +37,17 @@ export interface BuildAppOptions {
   db: DB;
   geo?: GeoLookup;
   authProvider?: AuthProvider;
-  logger?: FastifyServerOptions['logger'];
+  /** A pino logger instance; logging is disabled when omitted (tests). */
+  logger?: FastifyBaseLogger;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const { config, db } = opts;
   const app = Fastify({
-    logger: opts.logger ?? false,
+    ...(opts.logger ? { loggerInstance: opts.logger } : { logger: false }),
     // Trust exactly N proxy hops so a client cannot spoof its IP via X-Forwarded-For.
     trustProxy: config.TRUST_PROXY_HOPS > 0 ? (_addr: string, hop: number) => hop < config.TRUST_PROXY_HOPS : false,
     bodyLimit: 4 * 1024 * 1024,
-    disableRequestLogging: false,
     // Short codes are case-insensitive and may arrive with a trailing slash from some scanners.
     routerOptions: { ignoreTrailingSlash: true },
   });
@@ -137,15 +137,16 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // The single-page app, served from /app with history-API fallback.
   const webDir = config.WEB_DIST_DIR;
   if (webDir && existsSync(join(webDir, 'index.html'))) {
-    await app.register(fastifyStatic, { root: webDir, prefix: '/app/', wildcard: false, index: false });
+    // serve: false: only the sendFile helper; the routes below decide caching and SPA fallback.
+    await app.register(fastifyStatic, { root: webDir, serve: false });
     const sendIndex = (_req: FastifyRequest, reply: FastifyReply) =>
-      reply.header('cache-control', 'no-cache').sendFile('index.html', webDir);
+      reply.header('cache-control', 'no-cache').sendFile('index.html', webDir, { cacheControl: false });
     app.get('/app', sendIndex);
     app.get('/app/*', (req, reply) => {
       const path = (req.params as { '*': string })['*'];
       // Hashed build assets are immutable; anything else falls through to the SPA shell.
       if (path.startsWith('assets/') && existsSync(join(webDir, path))) {
-        return reply.header('cache-control', 'public, max-age=31536000, immutable').sendFile(path, webDir);
+        return reply.sendFile(path, webDir, { maxAge: 365 * 86_400_000, immutable: true });
       }
       if (/\.[a-z0-9]+$/i.test(path) && existsSync(join(webDir, path))) return reply.sendFile(path, webDir);
       return sendIndex(req, reply);

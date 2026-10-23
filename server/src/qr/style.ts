@@ -119,13 +119,20 @@ export function styleWarnings(style: QrStyle): StyleWarning[] {
   const bg = style.background.transparent ? '#ffffff' : style.background.color;
   const fgColors =
     style.foreground.type === 'solid' ? [style.foreground.color] : [style.foreground.from, style.foreground.to];
-  for (const c of [...fgColors, style.eyes.outerColor, style.eyes.innerColor]) {
+  // Corner-marker centres are large, solid shapes that scanners locate easily, so they tolerate
+  // lighter colours (e.g. a brand green) than the data modules do.
+  const checks: Array<[string | null, number]> = [
+    ...fgColors.map((c): [string, number] => [c, 3]),
+    [style.eyes.outerColor, 3],
+    [style.eyes.innerColor, 2],
+  ];
+  for (const [c, minimum] of checks) {
     if (!c) continue;
     const ratio = contrastRatio(c, bg);
-    if (ratio < 3) {
+    if (ratio < minimum) {
       warnings.push({
         code: 'low-contrast',
-        message: `Colour ${c} has low contrast (${ratio.toFixed(1)}:1) against the background; aim for at least 4:1.`,
+        message: `Colour ${c} has low contrast (${ratio.toFixed(1)}:1) against the background; aim for at least ${minimum + 1}:1.`,
       });
     }
     if (luminance(c.slice(0, 7)) > luminance(bg.slice(0, 7))) {
