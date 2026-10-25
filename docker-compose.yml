@@ -1,0 +1,35 @@
+# Local development / evaluation stack: Postgres + QR Director.
+# Uses AUTH_MODE=dev (no Microsoft sign-in). For Entra, set AUTH_MODE=entra and the AZURE_* variables.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qrdirector
+      POSTGRES_PASSWORD: qrdirector
+      POSTGRES_DB: qrdirector
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U qrdirector']
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '8080:8080'
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://qrdirector:qrdirector@db:5432/qrdirector
+      PUBLIC_BASE_URL: http://localhost:8080
+      SESSION_SECRET: change-me-to-a-long-random-string-0123456789
+      AUTH_MODE: dev
+      TRUST_PROXY_HOPS: '0'
+
+volumes:
+  pgdata:
